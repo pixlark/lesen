@@ -89,20 +89,26 @@ def read_outfile(path, sigil):
 	sections = [(parse_header(h), b) for h, b in map(split_section, sections)]
 	return sections
 
-def test_section(header, body, directory, command):
+def test_section(header, body, directory, options):
 	path = os.path.join(directory, header.file)
 	shortpath = os.path.basename(path)
 	if not os.path.isfile(path):
 		print('Source file \'{0}\' does not exist!'.format(path))
-	command = command.replace('%%', path)
+	command = options['command'].replace('%%', path)
 	result = subprocess.run(command, shell=True, capture_output=True)
 	def success():
 		fancy_print('{0} was a success!'.format(shortpath), green, bold)
 	def print_context():
 		fancy_print('stdout:', green)
-		fancy_print(result.stdout.decode(), dim)
+		if options['output_bin']:
+			fancy_print(str(result.stdout), dim)
+		else:
+			fancy_print(result.stdout.decode(), dim)
 		fancy_print('stderr:', red)
-		fancy_print(result.stderr.decode(), dim)
+		if options['output_bin']:
+			fancy_print(str(result.stderr), dim)
+		else:
+			fancy_print(result.stderr.decode(), dim)
 	if header.out_type == 'out':
 		if result.returncode != 0:
 			fancy_print('{0} recieved an error.'.format(shortpath), red, bold)
@@ -128,17 +134,21 @@ def test_from_directory(path, options):
 		return
 	sections = read_outfile(os.path.join(path, 'out'), options['sigil'])
 	for section in sections:
-		test_section(*section, path, options['command'])
+		test_section(*section, path, options)
 
 def main():
 	parser = argparse.ArgumentParser(
 		description='Testing suite for language development')
 	parser.add_argument('directory', metavar='directory',
 						help='Central testing directory')
+	parser.add_argument('--output-bin', action='store_true',
+						help='Write output as binary string')
 	args = parser.parse_args()
 	
 	validate_directory(args.directory)
 	options = load_manifest(os.path.join(args.directory, 'manifest.toml'))
+	options['output_bin'] = args.output_bin
+	
 	for directory in filter(lambda p: os.path.isdir(p),
 							map(lambda p: os.path.join(args.directory, p),
 								os.listdir(args.directory))):
