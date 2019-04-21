@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+
+from collections import namedtuple
+from itertools import *
+import argparse
+import os
+import re
+import subprocess
+import toml
+
+reset     = '\033[0m'
+bold      = '\033[1m'
+dim       = '\033[2m'
+underline = '\033[4m'
+blink     = '\033[5m'
+inverted  = '\033[7m'
+hidden    = '\033[8m'
+
+black   = '\033[30m'
+red     = '\033[31m'
+green   = '\033[32m'
+yellow  = '\033[33m'
+blue    = '\033[34m'
+magenta = '\033[35m'
+cyan    = '\033[36m'
+white   = '\033[37m'
+
+bright_black   = '\033[90m'
+bright_red     = '\033[91m'
+bright_green   = '\033[92m'
+bright_yellow  = '\033[93m'
+bright_blue    = '\033[94m'
+bright_magenta = '\033[95m'
+bright_cyan    = '\033[96m'
+bright_white   = '\033[97m'
+
+fancy_print_enabled = True
+
+def fancy_print(text, color, *styles, newline=True):
+	builder = []
+	if fancy_print_enabled:
+		builder.append(color)
+		builder.extend(styles)
+		builder.append(text)
+		builder.append(white)
+		builder.append(reset)
+	else:
+		builder.append(text)
+	if newline:
+		print(''.join(builder))
+	else:
+		print(''.join(builder), end='')
+
+def validate_directory(directory):
+	# Ensure that directory exists
+	if not os.path.isdir(directory):
+		print('\'{0}\' is not a directory'.format(directory))
+		exit(1)
+	# Ensure that manifest.toml exists
+	if 'manifest.toml' not in os.listdir(directory):
+		print('No manifest.toml found in \'{0}\''.format(directory))
+		exit(1)
+
+def load_manifest(path):
+	with open(path, 'r') as f:
+		text = f.read()
+		data = toml.loads(text)
+	return data
+
+Header = namedtuple('Header', 'file out_type')
+
+def parse_header(src):
+	src = src.strip()
+	regex = re.compile(r"\"([^\"\n]*)\"[\ ]*(out|error)")
+	match = regex.match(src)
+	if not match:
+		print('Invalid header \'{0}\''.format(src))
+		exit(1)
+	return Header(match.group(1), match.group(2))
+
+def read_outfile(path, sigil):
+	with open(path, 'r') as f:
+		text = f.read()
+	sections = text.split(sigil)
+	sections = sections[1:] # Ditch everything before first sigil
+	def split_section(section):
+		part = section.partition('\n')
+		return part[0], part[2]
+	sections = [(parse_header(h), b) for h, b in map(split_section, sections)]
+	return sections
+
+def test_section(header, body, directory, command):
+	path = os.path.join(directory, header.file)
+	shortpath = os.path.basename(path)
+	if not os.path.isfile(path):
+		print('Source file \'{0}\' does not exist!'.format(path))
+	command = command.replace('%%', path)
+	result = subprocess.run(command, shell=True, capture_output=True)
+	def success():
+		fancy_print('{0} was a success!'.format(shortpath), green, bold)
+	def print_context():
+		fancy_print('stdout:', green)
+		fancy_print(result.stdout.decode(), dim)
+		fancy_print('stderr:', red)
+		fancy_print(result.stderr.decode(), dim)
+	if header.out_type == 'out':
+		if result.returncode != 0:
+			fancy_print('{0} recieved an error.'.format(shortpath), red, bold)
+			print_context()
+		else:
+			if result.stdout.decode() == body:
+				success()
+			else:
+				fancy_print('{0} got the wrong output.'.format(shortpath), red, bold)
+				print_context()
+	elif header.out_type == 'error':
+		if result.returncode != 0:
+			success()
+		else:
+			fancy_print('{0} expected an error, but didn\'t get one.'.format(shortpath), red, bold)
+			print_context()
+	else:
+		assert(False) # Regular expression should prevent this from ever happening
+
+def test_from_directory(path, options):
+	if 'out' not in os.listdir(path):
+		print('\'{0}\' contains no out file'.format(path))
+		return
+	sections = read_outfile(os.path.join(path, 'out'), options['sigil'])
+	for section in sections:
+		test_section(*section, path, options['command'])
+
+def main():
+	parser = argparse.ArgumentParser(
+		description='Testing suite for language development')
+	parser.add_argument('directory', metavar='directory',
+						help='Central testing directory')
+	args = parser.parse_args()
+	
+	validate_directory(args.directory)
+	options = load_manifest(os.path.join(args.directory, 'manifest.toml'))
+	for directory in filter(lambda p: os.path.isdir(p),
+							map(lambda p: os.path.join(args.directory, p),
+								os.listdir(args.directory))):
+		test_from_directory(directory, options)
+
+if __name__ == '__main__':
+	main()
