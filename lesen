@@ -119,6 +119,11 @@ def test_section(header, body, directory, options):
 			else:
 				fancy_print('{0} got the wrong output.'.format(shortpath), red, bold)
 				print_context()
+				fancy_print('expected stdout:', blue, bold)
+				if options['output_bin']:
+					fancy_print(str(body.encode()), dim)
+				else:
+					fancy_print(body, dim)
 	elif header.out_type == 'error':
 		if result.returncode != 0:
 			success()
