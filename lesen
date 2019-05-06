@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import toml
+import xml.etree.ElementTree as ET
 
 reset     = '\033[0m'
 bold      = '\033[1m'
@@ -138,6 +139,23 @@ def test_section(header, body, directory, options):
 		assert(False) # Regular expression should prevent this from ever happening
 	return succeeded
 
+def test_section_for_leaks(header, body, directory, options):
+	if header.out_type == 'error':
+		return True
+	path = os.path.join(directory, header.file)
+	shortpath = os.path.basename(path)
+	if not os.path.isfile(path):
+		print('Source file \'{0}\' does not exist!'.format(path))
+	command = options['command'].replace('%%', path)
+	command = 'valgrind --leak-check=full --show-leak-kinds=all --xml=yes --xml-fd=1 {0}'.format(command)
+	result = subprocess.run(command, shell=True, capture_output=True)
+	# Parse XML
+	tree = ET.fromstring(result.stdout)
+	if any(filter(lambda x: x.tag == 'error', tree)) > 0:
+		fancy_print('   Leaked!', red, bold)
+		return False
+	return True
+
 def test_from_directory(path, options):
 	if 'out' not in os.listdir(path):
 		print('\'{0}\' contains no out file'.format(path))
@@ -148,6 +166,9 @@ def test_from_directory(path, options):
 	for section in sections:
 		if not test_section(*section, path, options):
 			any_failed = True
+		elif options['leak_check']:
+			if not test_section_for_leaks(*section, path, options):
+				any_failed = True
 	return any_failed
 
 def main():
@@ -157,11 +178,14 @@ def main():
 						help='Central testing directory')
 	parser.add_argument('--output-bin', action='store_true',
 						help='Write output as binary string')
+	parser.add_argument('--leak-check', action='store_true',
+						help='Check for leaks')
 	args = parser.parse_args()
 	
 	validate_directory(args.directory)
 	options = load_manifest(os.path.join(args.directory, 'manifest.toml'))
 	options['output_bin'] = args.output_bin
+	options['leak_check'] = args.leak_check
 
 	any_failures = False
 	for directory in filter(lambda p: os.path.isdir(p),
